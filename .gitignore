@@ -1,0 +1,10 @@
+# CMake
+/build/
+/build-asan/
+/build-tsan/
+
+# Go
+/go-control-plane/relay-control-plane
+
+# macOS
+.DS_Store
