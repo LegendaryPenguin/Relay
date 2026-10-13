@@ -40,10 +40,12 @@ include_directories(${CMAKE_SOURCE_DIR}/data-plane/include)
 
 add_library(relay_core STATIC
   data-plane/src/core/http.cpp
+  data-plane/src/core/json.cpp
   data-plane/src/core/metrics.cpp
   data-plane/src/upstream/balancer.cpp
   data-plane/src/upstream/pool.cpp
   data-plane/src/policy/policy.cpp
+  data-plane/src/proxy/configclient.cpp
   data-plane/src/proxy/router.cpp
   data-plane/src/proxy/socket.cpp
   data-plane/src/proxy/server.cpp
@@ -70,6 +72,8 @@ set(RELAY_TESTS
   pool_test
   router_test
   smuggling_test
+  json_test
+  configclient_test
 )
 
 foreach(test_name ${RELAY_TESTS})

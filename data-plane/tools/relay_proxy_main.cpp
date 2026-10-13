@@ -10,10 +10,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <csignal>
+#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
 
+#include "relay/configclient.hpp"
 #include "relay/proxy.hpp"
 
 using namespace relay;
@@ -83,6 +85,8 @@ int main(int argc, char** argv) {
     std::string endpoints_spec = "127.0.0.1:9000";
     std::string balancer = "p2c";
     bool accept_queue_set = false;
+    std::string control_plane;          // host:port; empty means static config
+    int control_poll_ms = 1000;
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -90,6 +94,8 @@ int main(int argc, char** argv) {
         if (a == "-port") server_cfg.port = static_cast<uint16_t>(std::atoi(next().c_str()));
         else if (a == "-workers") server_cfg.workers = static_cast<uint32_t>(std::atoi(next().c_str()));
         else if (a == "-upstreams") endpoints_spec = next();
+        else if (a == "-control-plane") control_plane = next();
+        else if (a == "-control-poll-ms") control_poll_ms = std::atoi(next().c_str());
         else if (a == "-balancer") balancer = next();
         else if (a == "-attempt-timeout-ms") route.per_attempt_timeout = Millis(std::atoi(next().c_str()));
         else if (a == "-deadline-ms") route.overall_deadline = Millis(std::atoi(next().c_str()));
@@ -113,7 +119,12 @@ int main(int argc, char** argv) {
                 "                   [-balancer round_robin|least_request|p2c|random|ring_hash]\n"
                 "                   [-attempt-timeout-ms N] [-deadline-ms N] [-max-attempts N]\n"
                 "                   [-retry-ratio F] [-rate-limit F] [-max-concurrent N]\n"
-                "                   [-queue-depth N] [-accept-queue N]\n");
+                "                   [-queue-depth N] [-accept-queue N]\n"
+                "                   [-control-plane host:port] [-control-poll-ms N]\n"
+                "\n"
+                "With -control-plane, the proxy polls the control plane for its route\n"
+                "table and -upstreams is used only as the bootstrap config, so the proxy\n"
+                "can serve before the control plane answers.\n");
             return 2;
         }
     }
@@ -154,6 +165,44 @@ int main(int argc, char** argv) {
     up.send = transport.Fn();
 
     Router router(table, up);
+
+    // The control-plane client, if one was configured.
+    //
+    // The static -upstreams list stays as the bootstrap table rather than
+    // being replaced by an empty one: a proxy that cannot serve until its
+    // control plane answers has made the control plane a hard dependency of
+    // every restart, which is exactly the coupling the two-process split is
+    // supposed to avoid. The first successful poll swaps it out.
+    std::unique_ptr<ConfigClient> config_client;
+    if (!control_plane.empty()) {
+        size_t colon = control_plane.rfind(':');
+        if (colon == std::string::npos) {
+            std::fprintf(stderr, "-control-plane expects host:port\n");
+            return 2;
+        }
+        ConfigClient::Config cc;
+        cc.host = control_plane.substr(0, colon);
+        cc.port = static_cast<uint16_t>(std::atoi(control_plane.c_str() + colon + 1));
+        cc.poll_interval = Millis(control_poll_ms > 0 ? control_poll_ms : 1000);
+        config_client = std::make_unique<ConfigClient>(cc, &router);
+
+        // One synchronous poll before serving, so the proxy starts on real
+        // configuration when the control plane is up. A failure here is not
+        // fatal — the bootstrap table serves and the background loop keeps
+        // trying.
+        Status cs = config_client->PollOnce();
+        if (cs.ok()) {
+            std::printf("control plane %s: applied snapshot version %llu\n",
+                        control_plane.c_str(),
+                        static_cast<unsigned long long>(config_client->stats().version));
+        } else {
+            std::fprintf(stderr,
+                         "control plane %s unreachable (%s); serving the bootstrap config\n",
+                         control_plane.c_str(), cs.ToString().c_str());
+        }
+        config_client->Start();
+    }
+
     Server server(server_cfg, &router);
     g_server = &server;
     std::signal(SIGINT, OnSignal);
@@ -171,6 +220,18 @@ int main(int argc, char** argv) {
 
     server.Serve();
     server.Stop();
+    if (config_client) {
+        config_client->Stop();
+        ConfigClient::Stats cs = config_client->stats();
+        std::printf("\nconfig client: %llu polls, %llu not-modified, %llu applied, "
+                    "%llu rejected, %llu errors (version %llu)\n",
+                    (unsigned long long)cs.polls, (unsigned long long)cs.not_modified,
+                    (unsigned long long)cs.applied, (unsigned long long)cs.rejected,
+                    (unsigned long long)cs.errors, (unsigned long long)cs.version);
+        if (!cs.last_error.empty()) {
+            std::printf("config client last message: %s\n", cs.last_error.c_str());
+        }
+    }
 
     for (const auto& [name, stats] : router.AllStats()) {
         std::printf("\n%s", stats.Render(name).c_str());

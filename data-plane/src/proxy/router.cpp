@@ -37,9 +37,12 @@ Router::Router(RouteTablePtr table, UpstreamTransport transport)
 }
 
 void Router::SetTable(RouteTablePtr table) {
-    table_ = std::move(table);
-    if (!table_) return;
-    table_version_seen_ = table_->version();
+    {
+        std::lock_guard<std::mutex> lock(table_mu_);
+        table_ = std::move(table);
+        if (!table_) return;
+        table_version_seen_ = table_->version();
+    }
     // Cluster runtimes are deliberately NOT rebuilt here. Each one's balancer
     // is re-pointed at the new snapshot lazily, on its next use, in
     // RuntimeFor.
@@ -118,13 +121,23 @@ Router::Outcome Router::Route(const Request& request, const std::string& remote_
     Outcome outcome;
     const TimePoint started = now;
 
-    if (!table_) {
+    // One copy of the table pointer for the whole request. Re-reading it
+    // mid-request would let a config push change the cluster between the
+    // endpoint selection and the retry, so a retry could land in a different
+    // cluster than the first attempt.
+    RouteTablePtr table;
+    {
+        std::lock_guard<std::mutex> lock(table_mu_);
+        table = table_;
+    }
+
+    if (!table) {
         outcome.status = Status::Internal("no route table");
         outcome.response = Response::Simple(500, "Internal Server Error", "no route table\n");
         return outcome;
     }
 
-    RouteTable::Match match = table_->Lookup(request.target);
+    RouteTable::Match match = table->Lookup(request.target);
     if (match.route == nullptr || !match.cluster) {
         outcome.status = Status::InvalidRequest("no route matches " + request.target);
         outcome.response = Response::Simple(404, "Not Found", "no route\n");

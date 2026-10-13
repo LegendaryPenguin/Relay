@@ -30,6 +30,8 @@
 
 #include <functional>
 #include <memory>
+#include <mutex>
+#include <ostream>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -49,6 +51,20 @@ enum class HashKeySource {
     kHeader,
     kRemoteAddress,
 };
+
+inline const char* HashKeySourceName(HashKeySource s) {
+    switch (s) {
+        case HashKeySource::kNone: return "none";
+        case HashKeySource::kPath: return "path";
+        case HashKeySource::kHeader: return "header";
+        case HashKeySource::kRemoteAddress: return "remote_address";
+    }
+    return "invalid";
+}
+
+inline std::ostream& operator<<(std::ostream& os, HashKeySource s) {
+    return os << HashKeySourceName(s);
+}
 
 struct RouteConfig {
     std::string cluster;
@@ -196,6 +212,19 @@ class Router {
     uint64_t HashFor(const RouteConfig& route, const Request& request,
                      const std::string& remote_address) const;
 
+    // Guards table_ only.
+    //
+    // The config client swaps the table from its own thread while workers are
+    // routing, so the pointer itself needs protection even though everything
+    // it points at is immutable. Route copies the shared_ptr under this lock
+    // and then works from the copy, so a request that started under the old
+    // table finishes under it — which is the property that makes publishing a
+    // whole snapshot safe.
+    //
+    // Deliberately separate from the serialisation of Route itself (which the
+    // server owns): a config push must not have to wait behind an in-flight
+    // request, and a request must not have to wait behind a config push.
+    mutable std::mutex table_mu_;
     RouteTablePtr table_;
     UpstreamTransport transport_;
     std::unordered_map<std::string, std::unique_ptr<ClusterRuntime>> clusters_;

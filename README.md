@@ -44,7 +44,7 @@ Both of those are in here as bugs I wrote and then fixed.
 
 **Sheds load on queue depth**, probabilistically, before latency becomes unbounded.
 
-**Discovers and health-checks** in Go, publishing whole versioned snapshots that the data plane polls.
+**Discovers and health-checks** in Go, publishing whole versioned snapshots that the data plane polls and applies — with a dependency-free JSON reader on the C++ side, a bootstrap config so the proxy can serve before the control plane answers, and a refusal path that keeps the previous table when a snapshot does not validate.
 
 ## 🧱 How I Built It
 
@@ -52,7 +52,7 @@ Both of those are in here as bugs I wrote and then fixed.
 
 **Week 2 — pooling and balancing, kept apart.** The balancer takes a snapshot and a hash and returns an endpoint; it opens no sockets and knows nothing about HTTP. That split is why `balancer_test.cpp` can run a million selections.
 
-**Week 3 — the control plane, and why it is a second language.** The request path wants predictable microseconds and no locks. Configuration wants retries, partial failure, and DNS — work measured in seconds that changes shape as requirements do. What crosses between them is a whole versioned snapshot, never a delta: a delta needs both sides to agree about the state it applies to, and they stop agreeing the first time a message is lost.
+**Week 3 — the control plane, and why it is a second language.** The request path wants predictable microseconds and no locks. Configuration wants retries, partial failure, and DNS — work measured in seconds that changes shape as requirements do. What crosses between them is a whole versioned snapshot, never a delta: a delta needs both sides to agree about the state it applies to, and they stop agreeing the first time a message is lost. The data plane polls it, parses it with a hand-written JSON reader, and swaps the route table atomically — `Router::SetTable` keeps per-endpoint breaker state across the swap, because a control plane polling every second would otherwise reset every circuit breaker every second and they would never open.
 
 **Week 4 — consistent hashing and health.** Virtual nodes, and the three-state health model (unknown / healthy / unhealthy) that stops a freshly deployed endpoint from receiving traffic on faith.
 
@@ -109,6 +109,8 @@ A budget expressed as "retries may be at most 20% of successful requests" bounds
 
 **Pool metrics reported zero on a pool with 99.9% reuse.** The transport was bound to a `ClusterStats` at construction that the router never rendered. Found by reading the stress-test output rather than by any test.
 
+**A test macro that printed freed memory.** `CHECK_EQ` captured its operands with `auto&&`, which lifetime-extends a temporary *value* but not a reference *into* one — so `CHECK_EQ(Parse(json)->AsString(), "x")` bound a reference to a string whose owning `shared_ptr` died at the end of that statement, and the failure output printed whatever was in the freed bytes. The operands are now copied by value.
+
 **The accept queue made load shedding unreachable.** One flag set both the shed threshold and the accept queue, so excess load got TCP resets from the accept loop before any worker consulted the shedder. A client cannot tell a reset from a dead proxy.
 
 ## 📊 What the Measurements Say
@@ -146,7 +148,8 @@ Full detail in [`bench/results.md`](bench/results.md). The headlines:
 - **This is not a high-performance proxy, and ~9,000 req/sec is the measurement that says so.** Envoy does six figures per core. The architecture is a bounded thread pool over blocking sockets, not an event-loop reactor, and **routing is serialised behind a single mutex** because the router holds per-endpoint breakers and per-cluster budgets as plain non-atomic state. The fix — per-worker policy state with periodic merging — is a real trade I did not make.
 - **No TLS, in either direction.** No HTTPS listener, no upstream TLS, no SNI, no certificate verification. For an L7 proxy in 2026 this is the largest functional gap.
 - **HTTP/1.1 only.** No HTTP/2, no h2c, no gRPC, no WebSocket upgrade — `Upgrade` is stripped as hop-by-hop. HTTP/2 would mean multiplexing, flow control and HPACK, which is a different project.
-- **The data plane does not consume the control plane's configuration.** The control plane resolves, health-checks, versions and serves snapshots, and `Router::SetTable` exists to accept them — but no polling client is wired up, so `relay-proxy` takes a static `-upstreams` list. The demo runs both and shows the control plane evicting a dead origin, which is honest about what each half does and does not demonstrate an end-to-end config push. This is the most significant piece of the original design that is missing.
+- **Configuration propagation is bounded by the poll interval, not instant.** The data plane polls (`-control-plane host:port`), so a change takes up to one interval to land. That is the deliberate trade for not having the control plane track delivery; it does mean a health change and the traffic shift are not simultaneous.
+- **There is no config rollback.** A snapshot that fails validation is refused and the previous table keeps serving, which is the right default — but there is no way to tell the data plane to go back to version N-1 once a *valid* but wrong config has been applied. Rolling forward is the only option.
 - **Bodies are fully buffered**, bounded at 8 MiB. No streaming, so a large upload occupies memory for its duration and a streaming response is not possible.
 - **The retry-safety signal is coarse.** `request_was_sent` distinguishes "never written" from "possibly processed", which makes retrying a POST safe in the first case. It cannot distinguish "written but not processed", so a timeout on a non-idempotent request is never retried — correct, and more conservative than a real proxy with idempotency keys would need to be.
 - **5xx responses do not charge the circuit breaker.** An upstream returning 500 for one bad route would otherwise open the breaker for all its traffic. Whether 5xx *should* count is a genuine policy question whose answer depends on the upstream; this picks the conservative side and does not make it configurable.
@@ -194,10 +197,16 @@ Running it by hand:
 ./build/relay-origin -port 9001 -body hello &
 ./build/relay-origin -port 9002 -latency-ms 50 &
 
+# Static configuration
 ./build/relay-proxy -port 8080 -workers 8 \
     -upstreams 127.0.0.1:9001,127.0.0.1:9002 \
     -balancer p2c -max-attempts 3 -retry-ratio 0.2 \
     -queue-depth 64 -accept-queue 256
+
+# Or driven by the control plane, with -upstreams as the bootstrap only
+./build/relay-proxy -port 8080 -workers 8 \
+    -upstreams 127.0.0.1:9001 \
+    -control-plane 127.0.0.1:9901 -control-poll-ms 1000
 
 go run ./go-control-plane/cmd/relay-control-plane \
     -addr 127.0.0.1:9901 -cluster "api=127.0.0.1:9001,127.0.0.1:9002"
@@ -214,6 +223,8 @@ data-plane/
   include/relay/
     status.hpp        the error taxonomy, and why kOverloaded is not a breaker failure
     http.hpp          HTTP/1.1, with the smuggling defences stated up front
+    json.hpp          a bounded JSON reader, for configuration only
+    configclient.hpp  polls the control plane and swaps the route table
     upstream.hpp      endpoints, five balancers, the consistent hash ring
     policy.hpp        breakers, retry budgets, rate limits, shedding — as one set
     pool.hpp          connection reuse, and the three spurious-502 defences
@@ -221,7 +232,7 @@ data-plane/
     socket.hpp        sockets, and an honest note about the threading model
     proxy.hpp         the router: the order of operations IS the design
   src/                implementations
-  tests/              11 binaries, 158 cases
+  tests/              13 binaries, 199 cases
   tools/              relay-proxy, relay-origin (misbehaves on request), relay-bench
 
 go-control-plane/

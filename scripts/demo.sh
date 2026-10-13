@@ -89,7 +89,42 @@ curl -s http://127.0.0.1:9901/status | jqp '
 c = d["clusters"][0]
 print("   cluster now: %d endpoints, %d eligible (version %d — the snapshot changed)" % (c["endpoints"], c["eligible"], d["version"]))'
 
-say "6. The circuit breaker opens on a dead upstream"
+say "6. The data plane consumes the control plane's config"
+# A second proxy, this one with -control-plane, so it learns its endpoint set
+# from the control plane rather than from a flag. The control plane has
+# already evicted 9001 above, so this proxy should never send traffic there.
+"$WORK/build/relay-proxy" -port 9102 -workers 4 \
+    -upstreams "127.0.0.1:9002" \
+    -control-plane 127.0.0.1:9901 -control-poll-ms 300 \
+    -balancer round_robin -attempt-timeout-ms 500 -deadline-ms 1500 \
+    >"$WORK/proxy-cp.log" 2>&1 &
+PROXY_CP=$!
+PIDS+=("$PROXY_CP")
+for _ in $(seq 50); do
+    curl -sf http://127.0.0.1:9102/ >/dev/null 2>&1 && break
+    sleep 0.1
+done
+grep -m1 "applied snapshot" "$WORK/proxy-cp.log" | sed 's/^/   /' || true
+echo "   30 requests through the control-plane-driven proxy:"
+for i in $(seq 1 30); do curl -s http://127.0.0.1:9102/ ; done | sort | uniq -c | sed 's/^/     /'
+echo "   (9001 is absent: the proxy learned the endpoint set, it was not told)"
+
+say "7. A config push reaches the data plane"
+# Restart 9001 so the control plane marks it healthy again, then show the
+# proxy picking it up without a restart or any flag change.
+"$WORK/build/relay-origin" -port 9001 -body "origin-9001" >"$WORK/origin-9001b.log" 2>&1 &
+ORIGIN_9001B=$!
+PIDS+=("$ORIGIN_9001B")
+echo "   restarted 9001; waiting for a probe and a poll..."
+sleep 3
+curl -s http://127.0.0.1:9901/status | jqp '
+c = d["clusters"][0]
+print("   control plane: %d of %d endpoints eligible (version %d)" % (c["eligible"], c["endpoints"], d["version"]))'
+echo "   30 more requests through the same proxy, not restarted:"
+for i in $(seq 1 30); do curl -s http://127.0.0.1:9102/ ; done | sort | uniq -c | sed 's/^/     /'
+echo "   9001 is back without touching the proxy. That is the config path working."
+
+say "8. The circuit breaker opens on a dead upstream"
 # The proxy was started with a static upstream list, so it still tries 9001.
 # That is deliberate here: it shows the data plane protecting itself without
 # waiting for the control plane.
@@ -103,7 +138,7 @@ echo "     $ok succeeded, $fail failed"
 echo "     (retries route around the dead host; the breaker stops attempting it)"
 grep -o 'relay_breaker_rejections_total{[^}]*} [0-9]*' "$WORK/proxy.log" 2>/dev/null | tail -1 | sed 's/^/     /' || true
 
-say "7. Load shedding under a flood"
+say "9. Load shedding under a flood"
 # A queue-depth-based shedder with a small queue and few workers: the flood
 # produces 503s rather than unbounded latency.
 kill "$PROXY_MAIN" 2>/dev/null || true

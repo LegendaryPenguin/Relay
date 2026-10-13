@@ -103,10 +103,22 @@ inline int RunAll(int argc, char** argv) {
 
 // CHECK_EQ prints both sides, because "assertion failed" without the values is
 // an invitation to add a print statement and recompile.
+//
+// The operands are captured BY VALUE, not by `auto&&`. That is deliberate and
+// it cost a debugging session to learn: `auto&& _a = expr` lifetime-extends a
+// temporary *value*, but it does not extend a reference that points *into* a
+// temporary. So `CHECK_EQ(Parse(json)->AsString(), "x")` — where AsString
+// returns `const std::string&` and Parse returns a temporary shared_ptr —
+// bound a reference to a string whose owner was destroyed at the end of that
+// very statement, and the failure output printed freed memory.
+//
+// Copying costs a allocation per assertion in a test binary, which is nothing,
+// and removes the whole class of trap for every accessor that returns a
+// reference.
 #define CHECK_EQ(a, b)                                                         \
     do {                                                                       \
-        auto&& _a = (a);                                                       \
-        auto&& _b = (b);                                                       \
+        auto _a = (a);                                                         \
+        auto _b = (b);                                                       \
         if (!(_a == _b)) {                                                     \
             std::ostringstream _os;                                            \
             _os << #a " == " #b "\n          left:  " << _a                    \
@@ -117,8 +129,8 @@ inline int RunAll(int argc, char** argv) {
 
 #define CHECK_NE(a, b)                                                         \
     do {                                                                       \
-        auto&& _a = (a);                                                       \
-        auto&& _b = (b);                                                       \
+        auto _a = (a);                                                         \
+        auto _b = (b);                                                       \
         if ((_a == _b)) {                                                      \
             std::ostringstream _os;                                            \
             _os << #a " != " #b " but both are " << _a;                        \

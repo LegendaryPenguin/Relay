@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <ostream>
 #include <optional>
 #include <string>
 #include <vector>
@@ -33,6 +34,10 @@ enum class Health {
 };
 
 const char* HealthName(Health h);
+
+// Printable so assertions and log lines name the value rather than its
+// integer. Found by ADL in namespace relay.
+inline std::ostream& operator<<(std::ostream& os, Health h) { return os << HealthName(h); }
 
 struct Endpoint {
     std::string host;
@@ -111,6 +116,10 @@ enum class BalancerKind {
 };
 
 const char* BalancerKindName(BalancerKind k);
+
+inline std::ostream& operator<<(std::ostream& os, BalancerKind k) {
+    return os << BalancerKindName(k);
+}
 
 // Consistent hash ring with virtual nodes.
 //
