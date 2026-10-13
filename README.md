@@ -4,7 +4,7 @@
 
 A relay in a circuit is the thing that decides whether current gets through. The name is the point: a proxy's value under normal conditions is routing, and its value under failure is refusing — bounding retries, cutting off dead upstreams, and shedding work it cannot do rather than queueing it until everything is slow.
 
-Relay is **4,499 lines of C++** and **1,554 lines of Go**, backed by **3,980 lines of tests** — **199 tests** across both languages, clean under AddressSanitizer and UndefinedBehaviorSanitizer and `-race`. It implements an HTTP/1.1 parser with request-smuggling defences, five load-balancing policies including consistent hashing, connection pooling, per-endpoint circuit breakers, a retry *budget*, token-bucket rate limiting, queue-depth load shedding, and a control plane that resolves and health-checks endpoints and publishes versioned configuration.
+Relay is **5665 lines of C++** and **1,554 lines of Go**, backed by **4559 lines of tests** — **236 tests** across both languages, clean under AddressSanitizer and UndefinedBehaviorSanitizer and `-race`. It implements an HTTP/1.1 parser with request-smuggling defences, five load-balancing policies including consistent hashing, connection pooling, per-endpoint circuit breakers, a retry *budget*, token-bucket rate limiting, queue-depth load shedding, and a control plane that resolves and health-checks endpoints and publishes versioned configuration.
 
 The thing I would point at: **three of my own assumptions are marked "refuted" in [`bench/results.md`](bench/results.md).** Round-robin is not the cheap balancer. Plain FNV-1a is not adequate for ring points — it produced 99% load skew while passing every functional test. And headers, not bodies, are the expensive part of HTTP parsing.
 
@@ -232,7 +232,7 @@ data-plane/
     socket.hpp        sockets, and an honest note about the threading model
     proxy.hpp         the router: the order of operations IS the design
   src/                implementations
-  tests/              13 binaries, 199 cases
+  tests/              13 binaries, 195 cases
   tools/              relay-proxy, relay-origin (misbehaves on request), relay-bench
 
 go-control-plane/
