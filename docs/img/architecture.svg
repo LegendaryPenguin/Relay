@@ -1,0 +1,117 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 700" width="980" height="700" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8b9bb4"/>
+    </marker>
+    <marker id="arrowAccent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#5eb0ef"/>
+    </marker>
+    <marker id="arrowWarn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#d8a657"/>
+    </marker>
+  </defs>
+
+  <rect width="980" height="700" fill="#14161b"/>
+
+  <text x="32" y="44" fill="#e6e9ef" font-size="21" font-weight="600">Relay</text>
+  <text x="32" y="68" fill="#8b9bb4" font-size="13">L7 traffic platform — failure protection only works as a set</text>
+
+  <!-- ===================== client ===================== -->
+  <rect x="32" y="96" width="150" height="58" rx="6" fill="#1b1f27" stroke="#2f3643"/>
+  <text x="48" y="120" fill="#e6e9ef" font-size="12">clients</text>
+  <text x="48" y="140" fill="#6f7d94" font-size="10.5">keep-alive, pipelined</text>
+
+  <path d="M 182 125 L 222 125" stroke="#8b9bb4" stroke-width="1.6" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- ===================== data plane ===================== -->
+  <rect x="222" y="96" width="470" height="520" rx="8" fill="#171a21" stroke="#39404f"/>
+  <text x="240" y="122" fill="#5eb0ef" font-size="13" font-weight="600">data plane  (C++)</text>
+  <text x="560" y="122" fill="#6f7d94" font-size="11">the hot path</text>
+
+  <rect x="240" y="138" width="434" height="58" rx="6" fill="#1e232c" stroke="#2f3643"/>
+  <text x="254" y="159" fill="#e6e9ef" font-size="12">HTTP/1.1 parser</text>
+  <text x="254" y="177" fill="#6f7d94" font-size="10.5">incremental at any byte boundary · limits enforced while parsing</text>
+  <text x="254" y="191" fill="#d8a657" font-size="10.5">ambiguous framing is REJECTED, never resolved</text>
+
+  <path d="M 457 196 L 457 216" stroke="#8b9bb4" stroke-width="1.6" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- the ordered pipeline -->
+  <rect x="240" y="216" width="434" height="208" rx="6" fill="#1b1f27" stroke="#3a6ea5"/>
+  <text x="254" y="238" fill="#5eb0ef" font-size="12">the router — the order of operations IS the design</text>
+
+  <rect x="254" y="250" width="406" height="26" rx="4" fill="#232936" stroke="#2f3643"/>
+  <text x="264" y="268" fill="#cdd6e3" font-size="10.5">1. rate limit      cheapest check, bounds one abusive client</text>
+
+  <rect x="254" y="282" width="406" height="26" rx="4" fill="#232936" stroke="#5a4a2a"/>
+  <text x="264" y="300" fill="#d8a657" font-size="10.5">2. load shed       on QUEUE DEPTH — latency lags the overload</text>
+
+  <rect x="254" y="314" width="406" height="26" rx="4" fill="#232936" stroke="#2f3643"/>
+  <text x="264" y="332" fill="#cdd6e3" font-size="10.5">3. select          p2c · least-request · rr · random · ring</text>
+
+  <rect x="254" y="346" width="406" height="26" rx="4" fill="#232936" stroke="#2f3643"/>
+  <text x="264" y="364" fill="#cdd6e3" font-size="10.5">4. breaker         PER ENDPOINT, not per cluster</text>
+
+  <rect x="254" y="378" width="406" height="26" rx="4" fill="#232936" stroke="#2f3643"/>
+  <text x="264" y="396" fill="#cdd6e3" font-size="10.5">5. attempt         per-attempt timeout AND a total deadline</text>
+
+  <rect x="254" y="408" width="406" height="12" rx="3" fill="#1e232c" stroke="#5a4a2a"/>
+  <text x="264" y="418" fill="#d8a657" font-size="9.5">6. retry BUDGET — a count bounds one request, a budget bounds all</text>
+
+  <path d="M 457 424 L 457 444" stroke="#8b9bb4" stroke-width="1.6" fill="none" marker-end="url(#arrow)"/>
+
+  <rect x="240" y="444" width="434" height="62" rx="6" fill="#1e232c" stroke="#2f3643"/>
+  <text x="254" y="466" fill="#e6e9ef" font-size="12">connection pool</text>
+  <text x="254" y="484" fill="#6f7d94" font-size="10.5">LIFO — FIFO hands out the oldest, likeliest-dead connection</text>
+  <text x="254" y="499" fill="#6f7d94" font-size="10.5">bounded idle lifetime · peer-close check · reused ⇒ safe retry</text>
+
+  <rect x="240" y="518" width="210" height="80" rx="6" fill="#1e232c" stroke="#2f3643"/>
+  <text x="254" y="540" fill="#cdd6e3" font-size="11">metrics</text>
+  <text x="254" y="558" fill="#6f7d94" font-size="10">log-linear histogram</text>
+  <text x="254" y="572" fill="#6f7d94" font-size="10">per-cluster counters</text>
+  <text x="254" y="588" fill="#6f7d94" font-size="10">bucket counts merge exactly</text>
+
+  <rect x="464" y="518" width="210" height="80" rx="6" fill="#1e232c" stroke="#2f3643"/>
+  <text x="478" y="540" fill="#cdd6e3" font-size="11">config client</text>
+  <text x="478" y="558" fill="#6f7d94" font-size="10">polls, ETag-conditional</text>
+  <text x="478" y="572" fill="#6f7d94" font-size="10">swaps the route table</text>
+  <text x="478" y="588" fill="#6f7d94" font-size="10">a bad snapshot is refused</text>
+
+  <!-- ===================== upstreams ===================== -->
+  <path d="M 692 480 L 732 480" stroke="#8b9bb4" stroke-width="1.6" fill="none" marker-end="url(#arrow)"/>
+  <rect x="732" y="420" width="216" height="128" rx="6" fill="#1b1f27" stroke="#2f3643"/>
+  <text x="748" y="444" fill="#e6e9ef" font-size="12">upstreams</text>
+  <text x="748" y="466" fill="#6f7d94" font-size="10.5">10.0.0.1:8080  healthy  w=1</text>
+  <text x="748" y="482" fill="#6f7d94" font-size="10.5">10.0.0.2:8080  healthy  w=2</text>
+  <text x="748" y="498" fill="#d8a657" font-size="10.5">10.0.0.3:8080  unhealthy</text>
+  <text x="748" y="514" fill="#6f7d94" font-size="10.5">10.0.0.4:8080  unknown</text>
+  <text x="748" y="536" fill="#6f7d94" font-size="10">unknown is not eligible</text>
+
+  <!-- ===================== control plane ===================== -->
+  <rect x="732" y="96" width="216" height="300" rx="8" fill="#171a21" stroke="#39404f"/>
+  <text x="748" y="122" fill="#5eb0ef" font-size="13" font-weight="600">control plane  (Go)</text>
+  <text x="748" y="140" fill="#6f7d94" font-size="10.5">not on the request path</text>
+
+  <rect x="748" y="154" width="184" height="72" rx="5" fill="#1e232c" stroke="#2f3643"/>
+  <text x="760" y="174" fill="#cdd6e3" font-size="11">resolution</text>
+  <text x="760" y="191" fill="#6f7d94" font-size="10">DNS or static</text>
+  <text x="760" y="205" fill="#6f7d94" font-size="10">failure keeps the last</text>
+  <text x="760" y="219" fill="#6f7d94" font-size="10">good list; a blip is not</text>
+
+  <rect x="748" y="236" width="184" height="72" rx="5" fill="#1e232c" stroke="#2f3643"/>
+  <text x="760" y="256" fill="#cdd6e3" font-size="11">health probes</text>
+  <text x="760" y="273" fill="#6f7d94" font-size="10">hysteresis, asymmetric:</text>
+  <text x="760" y="287" fill="#6f7d94" font-size="10">out fast, back slow</text>
+  <text x="760" y="301" fill="#6f7d94" font-size="10">a flapper oscillates</text>
+
+  <rect x="748" y="318" width="184" height="64" rx="5" fill="#1b1f27" stroke="#3a6ea5"/>
+  <text x="760" y="338" fill="#5eb0ef" font-size="11">versioned snapshots</text>
+  <text x="760" y="355" fill="#6f7d94" font-size="10">whole state, never a delta</text>
+  <text x="760" y="369" fill="#6f7d94" font-size="10">a lost push self-corrects</text>
+
+  <path d="M 732 350 L 692 350" stroke="#5eb0ef" stroke-width="1.6" fill="none" marker-end="url(#arrowAccent)"/>
+  <text x="697" y="340" fill="#5eb0ef" font-size="9.5">pull</text>
+
+  <text x="32" y="648" fill="#5eb0ef" font-size="11">each mechanism alone makes an outage worse. retries multiply load; a breaker turns partial failure total;</text>
+  <text x="32" y="666" fill="#6f7d94" font-size="11">a rate limit rejects what could have been served; shedding needs a signal. together, each bounds a different failure mode.</text>
+  <text x="32" y="688" fill="#d8a657" font-size="11">the coupling that matters most: shed load must NOT charge the breaker, or self-protection becomes a self-inflicted outage.</text>
+</svg>
